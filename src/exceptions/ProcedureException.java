@@ -5,7 +5,7 @@ package exceptions;
  */
 public class ProcedureException extends Exception {
 
-    public ProcedureException(){
-        super.getMessage();
+    public ProcedureException(String msg) {
+        super("" + msg);
     }
 }
