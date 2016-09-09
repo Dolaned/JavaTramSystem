@@ -1,6 +1,6 @@
 package server;
 
-import exceptions.MessageLengthMismatch;
+import exceptions.*;
 import utilities.Message;
 import utilities.RPCMessage;
 
@@ -15,22 +15,17 @@ public class TramServerImpl implements TramServer {
     private static final String SERVERNAME = "TramServer";
     private String url;
     private static final int PORT = 3419;
-    public static TramServerImpl instance = null;
+    private static TramServerImpl instance = null;
     private HashMap<Integer, List> lines;
     //contains UUID for Tram identifier, first Integer is line, second is position on that line.
     private ConcurrentHashMap<UUID, LineAndStopPair> tramInfo;
 
-    private enum procedures {
-        STOPLIST, REQUEST, UPDATE
-    }
-
-    public enum Direction {
+    private enum Direction {
         UP, BACK
     }
 
 
-    protected TramServerImpl() {
-    }
+    private TramServerImpl() {}
 
     private void init() {
         try {
@@ -72,7 +67,7 @@ public class TramServerImpl implements TramServer {
 
         String[] returnQuery = {Integer.toString(nextStop)};
 
-        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY, 1, new Short("0"), generateCSVString(returnQuery), new Short("1"));
+        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY,1 , new Short("0"), generateCSVString(returnQuery), new Short("0"));
         sentRpcMessage.setTransactionId(receivedRpcMessage.getTransactionId());
         sentRpcMessage.setRPCId(receivedRpcMessage.getRPCId());
 
@@ -86,10 +81,21 @@ public class TramServerImpl implements TramServer {
     * Procedure ID 1
     * */
     @Override
-    public Message updateTramLocation(Message m) throws RemoteException, MessageLengthMismatch {
+    public Message updateTramLocation(Message m) throws RemoteException, MessageLengthMismatch, MessageTypeException, ProcedureException, TramNotValidException {
         RPCMessage receivedRpcMessage = m.unMarshal();
+
+
+        if(receivedRpcMessage.getMessageType() != RPCMessage.MessageType.REQUEST){
+            throw new MessageTypeException(receivedRpcMessage.getMessageType() + " is incorrect REQUEST expected");
+        }
+        if(receivedRpcMessage.getProcedureId() != 1){
+            throw new ProcedureException(receivedRpcMessage.getProcedureId()+ " is not equal to procedure requested");
+        }
         String[] query = receivedRpcMessage.getCsv_data().split(",");
 
+        if(this.tramInfo.get(UUID.fromString(query[1])) == null){
+            throw new TramNotValidException(query[1] + " Not Found");
+        }
 
         LineAndStopPair updateTram = this.tramInfo.get(UUID.fromString(query[1]));
         Direction d = getDirection(Integer.parseInt(query[0]), Integer.parseInt(query[2]), updateTram.getStop());
@@ -98,7 +104,7 @@ public class TramServerImpl implements TramServer {
         updateTram.setDirection(d);
 
 
-        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY, 1, new Short("1"), generateCSVString(new String[0]), new Short("1"));
+        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY, 1, new Short("1"), generateCSVString(new String[0]), new Short("0"));
         sentRpcMessage.setTransactionId(receivedRpcMessage.getTransactionId());
         sentRpcMessage.setRPCId(receivedRpcMessage.getRPCId());
 
@@ -115,23 +121,45 @@ public class TramServerImpl implements TramServer {
     *
     * */
     @Override
-    public Message requestLineList(Message m) throws RemoteException, MessageLengthMismatch {
+    public Message requestLineList(Message m) throws RemoteException, MessageLengthMismatch, LineNotFoundException, TramNotValidException, ProcedureException, MessageTypeException {
         //unmarshal received message.
         RPCMessage receivedRpcMessage = m.unMarshal();
         //get the query from the orginal message
 
+        if(receivedRpcMessage.getMessageType() != RPCMessage.MessageType.REQUEST){
+            throw new MessageTypeException(receivedRpcMessage.getMessageType() + " is incorrect REQUEST expected");
+        }
+        if(receivedRpcMessage.getProcedureId() != 2){
+            throw new ProcedureException(receivedRpcMessage.getProcedureId()+ " is not equal to procedure requested");
+        }
+
         String[] query = receivedRpcMessage.getCsv_data().split(",");
+
+        if(this.lines.get(Integer.parseInt(query[1])) == null){
+            throw new LineNotFoundException(query[1] + " Not Found");
+        }
+
         Integer[] stops = (Integer[]) this.lines.get(Integer.parseInt(query[1])).toArray(new Integer[this.lines.get(Integer.parseInt(query[1])).size()]);
+
+
         String[] stopString = new String[stops.length];
         for (int i = 0; i < stops.length; i++) {
             stopString[i] = stops[i].toString();
         }
 
+        if(this.tramInfo.get(UUID.fromString(query[0]))!= null){
+            throw new TramNotValidException(query[0]+ " Tram With id already exists");
+        }
+
         this.tramInfo.put(UUID.fromString(query[0]), new LineAndStopPair(Integer.parseInt(query[1]), Integer.parseInt(stopString[0]), Direction.UP));
 
-        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY, 1, new Short("2"), generateCSVString(stopString), new Short("1"));
+        RPCMessage sentRpcMessage = new RPCMessage(RPCMessage.MessageType.REPLY, 1, new Short("2"), generateCSVString(stopString), new Short("0"));
+
         sentRpcMessage.setTransactionId(receivedRpcMessage.getTransactionId());
         sentRpcMessage.setRPCId(receivedRpcMessage.getRPCId());
+        sentRpcMessage.setRequestId(1);
+
+
 
         Message sentMarshalled = new Message();
         sentMarshalled.marshal(sentRpcMessage);
@@ -207,7 +235,6 @@ public class TramServerImpl implements TramServer {
 
     private Direction getDirection(int line,int currentStop, int previousStop){
         List stops = this.lines.get(line);
-        System.out.println(currentStop + "<<current || previous>> " + previousStop);
 
         for(int i = 0; i <= stops.size()-1; i++){
             if(currentStop == stops.get(0) && (previousStop == stops.get(1)|| previousStop ==0)){
